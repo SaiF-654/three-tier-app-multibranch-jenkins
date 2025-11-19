@@ -92,14 +92,29 @@ FRONTEND_IMAGE=${env.FRONTEND_TAG_DH}
         }
 
         stage('Stop Old Containers (Auto-Kill)') {
-            steps {
-                echo "Stopping all old containers..."
-                sh """
-                    docker-compose --env-file .env down || true
-                    docker container prune -f || true
-                """
-            }
-        }
+    steps {
+        echo "Force killing all old containers..."
+        sh """
+            echo ">>> Stopping docker-compose"
+            docker-compose --env-file .env down || true
+
+            echo ">>> Killing containers using port 27017"
+            CONTAINER_ID=\$(docker ps -q --filter "publish=27017")
+            if [ ! -z "\$CONTAINER_ID" ]; then
+                echo "Killing Mongo container: \$CONTAINER_ID"
+                docker kill \$CONTAINER_ID || true
+                docker rm -f \$CONTAINER_ID || true
+            fi
+
+            echo ">>> Removing all unused containers"
+            docker rm -f \$(docker ps -aq) || true
+
+            echo ">>> Prune system"
+            docker system prune -af || true
+        """
+    }
+}
+
 
         stage('Deploy Environment') {
             steps {
