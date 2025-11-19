@@ -3,11 +3,23 @@ pipeline {
 
     environment {
         DOCKERHUB_CREDENTIALS_ID = 'dockerhub_credentials'
-        BRANCH_NAME = "${env.BRANCH_NAME}"
-        IMAGE_TAG   = "${BRANCH_NAME}-${BUILD_NUMBER}"
+        IMAGE_TAG = "${BRANCH_NAME}-${BUILD_NUMBER}"
+        DOCKERHUB_USER = 'saifrehman123'
+    }
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
     }
 
     stages {
+
+        stage('Clean Workspace (Fix Git Lock)') {
+            steps {
+                echo "Cleaning old workspace to avoid .git/index.lock issues..."
+                deleteDir()
+            }
+        }
 
         stage('Checkout Source') {
             steps {
@@ -17,11 +29,13 @@ pipeline {
 
         stage('Docker Hub Login') {
             steps {
-                withCredentials([usernamePassword(credentialsId: "${DOCKERHUB_CREDENTIALS_ID}",
-                    usernameVariable: 'DOCKERHUB_USER',
-                    passwordVariable: 'DOCKERHUB_PASS')]) {
+                withCredentials([usernamePassword(
+                    credentialsId: "${DOCKERHUB_CREDENTIALS_ID}",
+                    usernameVariable: 'DH_USER',
+                    passwordVariable: 'DH_PASS'
+                )]) {
                     sh '''
-                        echo $DOCKERHUB_PASS | docker login -u $DOCKERHUB_USER --password-stdin
+                        echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
                     '''
                 }
             }
@@ -30,12 +44,12 @@ pipeline {
         stage('Build & Tag Images') {
             steps {
                 script {
-                    env.FRONTEND_TAG_DH = "${DOCKERHUB_USER}/three-tier-app-frontend:${IMAGE_TAG}"
-                    env.BACKEND_TAG_DH  = "${DOCKERHUB_USER}/three-tier-app-backend:${IMAGE_TAG}"
+                    env.FRONTEND_TAG_DH = "${env.DOCKERHUB_USER}/three-tier-app-frontend:${IMAGE_TAG}"
+                    env.BACKEND_TAG_DH  = "${env.DOCKERHUB_USER}/three-tier-app-backend:${IMAGE_TAG}"
 
                     sh """
-                        docker build -t ${BACKEND_TAG_DH} ./backend
-                        docker build -t ${FRONTEND_TAG_DH} ./frontend
+                        docker build -t ${env.BACKEND_TAG_DH} ./backend
+                        docker build -t ${env.FRONTEND_TAG_DH} ./frontend
                     """
                 }
             }
@@ -44,8 +58,8 @@ pipeline {
         stage('Push Images to Docker Hub') {
             steps {
                 sh """
-                    docker push ${BACKEND_TAG_DH}
-                    docker push ${FRONTEND_TAG_DH}
+                    docker push ${env.BACKEND_TAG_DH}
+                    docker push ${env.FRONTEND_TAG_DH}
                 """
             }
         }
@@ -53,12 +67,14 @@ pipeline {
         stage('Prepare .env for Compose') {
             steps {
                 script {
-                    writeFile (
-                    file: '.env', 
+                    writeFile(
+                        file: '.env',
                         text: """
-                    BACKEND_IMAGE=${BACKEND_TAG_DH}
-                    FRONTEND_IMAGE=${FRONTEND_TAG_DH}
-                     """ )
+BACKEND_IMAGE=${env.BACKEND_TAG_DH}
+FRONTEND_IMAGE=${env.FRONTEND_TAG_DH}
+"""
+                    )
+                    sh "cat .env"
                 }
             }
         }
@@ -75,11 +91,35 @@ pipeline {
             }
         }
 
+        stage('Stop Old Containers (Auto-Kill)') {
+    steps {
+        echo "Force killing all old containers..."
+        sh """
+            echo ">>> Stopping docker-compose"
+            docker-compose --env-file .env down || true
+
+            echo ">>> Killing containers using port 27017"
+            CONTAINER_ID=\$(docker ps -q --filter "publish=27017")
+            if [ ! -z "\$CONTAINER_ID" ]; then
+                echo "Killing Mongo container: \$CONTAINER_ID"
+                docker kill \$CONTAINER_ID || true
+                docker rm -f \$CONTAINER_ID || true
+            fi
+
+            echo ">>> Removing all unused containers"
+            docker rm -f \$(docker ps -aq) || true
+
+            echo ">>> Prune system"
+            docker system prune -af || true
+        """
+    }
+}
+
+
         stage('Deploy Environment') {
             steps {
                 sh """
-                    docker-compose --env-file .env down
-  				docker-compose --env-file .env pull
+                    docker-compose --env-file .env pull
                     docker-compose --env-file .env up -d --remove-orphans
                 """
             }
@@ -88,7 +128,7 @@ pipeline {
         stage('Cleanup Local Images') {
             steps {
                 sh """
-                    docker rmi ${BACKEND_TAG_DH} ${FRONTEND_TAG_DH} || true
+                    docker rmi ${env.BACKEND_TAG_DH} ${env.FRONTEND_TAG_DH} || true
                 """
             }
         }
@@ -96,7 +136,7 @@ pipeline {
 
     post {
         success {
-            echo "✅ ${BRANCH_NAME} environment deployed successfully using Docker Hub images!"
+            echo "✅ ${BRANCH_NAME} environment deployed successfully!"
         }
         failure {
             echo "❌ Deployment failed for ${BRANCH_NAME}. Check logs."
