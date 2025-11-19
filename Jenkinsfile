@@ -5,6 +5,7 @@ pipeline {
         DOCKERHUB_CREDENTIALS_ID = 'dockerhub_credentials'
         BRANCH_NAME = "${env.BRANCH_NAME}"
         IMAGE_TAG   = "${BRANCH_NAME}-${BUILD_NUMBER}"
+        DOCKERHUB_USER = 'saifrehman123
     }
 
     stages {
@@ -53,12 +54,12 @@ pipeline {
         stage('Prepare .env for Compose') {
             steps {
                 script {
-                    writeFile 
+                    writeFile (
                     file: '.env', 
                         text: """
                     BACKEND_IMAGE=${BACKEND_TAG_DH}
                     FRONTEND_IMAGE=${FRONTEND_TAG_DH}
-                     """
+                     """ )
                 }
             }
         }
