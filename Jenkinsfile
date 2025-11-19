@@ -2,82 +2,93 @@ pipeline {
     agent any
 
     environment {
-        AWS_REGION = 'eu-north-1' // change to your region
-        AWS_ECR_REPO_FRONTEND = 'three-tier-app-frontend'
-        AWS_ECR_REPO_BACKEND = 'three-tier-app-backend'
-        ECR_URI = '005743379632.dkr.ecr.eu-north-1.amazonaws.com'
-        IMAGE_TAG = "${BUILD_NUMBER}"
+        DOCKERHUB_CREDENTIALS_ID = 'dockerhub_credentials'
+        BRANCH_NAME = "${env.BRANCH_NAME}"
+        IMAGE_TAG   = "${BRANCH_NAME}-${BUILD_NUMBER}"
     }
 
     stages {
-        stage('Clone the Repo') {
+
+        stage('Checkout Source') {
             steps {
-                git branch: 'main', url: 'https://github.com/saif-654/three-tier-app-jenkins-ECR.git'
+                checkout scm
             }
         }
 
-        stage('Login to ECR') {
+        stage('Docker Hub Login') {
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'aws-ecr',
-                    usernameVariable: 'AWS_ACCESS_KEY_ID',
-                    passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                )]) {
+                withCredentials([usernamePassword(credentialsId: "${DOCKERHUB_CREDENTIALS_ID}",
+                    usernameVariable: 'DOCKERHUB_USER',
+                    passwordVariable: 'DOCKERHUB_PASS')]) {
                     sh '''
-                        aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
-                        aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
-                        aws configure set default.region ${AWS_REGION}
-                        aws ecr get-login-password | docker login --username AWS --password-stdin ${ECR_URI}
+                        echo $DOCKERHUB_PASS | docker login -u $DOCKERHUB_USER --password-stdin
                     '''
                 }
             }
         }
 
-        stage('Build Docker Images') {
+        stage('Build & Tag Images') {
             steps {
                 script {
-                    env.FRONTEND_TAG = "${ECR_URI}/${AWS_ECR_REPO_FRONTEND}:${IMAGE_TAG}"
-                    env.BACKEND_TAG = "${ECR_URI}/${AWS_ECR_REPO_BACKEND}:${IMAGE_TAG}"
+                    env.FRONTEND_TAG_DH = "${DOCKERHUB_USER}/three-tier-app-frontend:${IMAGE_TAG}"
+                    env.BACKEND_TAG_DH  = "${DOCKERHUB_USER}/three-tier-app-backend:${IMAGE_TAG}"
 
-                    sh "docker build -t ${env.BACKEND_TAG} ./backend"
-                    sh "docker build -t ${env.FRONTEND_TAG} ./frontend"
+                    sh """
+                        docker build -t ${BACKEND_TAG_DH} ./backend
+                        docker build -t ${FRONTEND_TAG_DH} ./frontend
+                    """
                 }
             }
         }
 
-        stage('Push Images to ECR') {
+        stage('Push Images to Docker Hub') {
             steps {
                 sh """
-                    docker push ${env.FRONTEND_TAG}
-                    docker push ${env.BACKEND_TAG}
+                    docker push ${BACKEND_TAG_DH}
+                    docker push ${FRONTEND_TAG_DH}
                 """
             }
         }
 
-        stage('Clean up after push') {
+        stage('Prepare .env for Compose') {
+            steps {
+                script {
+                    writeFile 
+                    file: '.env', 
+                        text: """
+                    BACKEND_IMAGE=${BACKEND_TAG_DH}
+                    FRONTEND_IMAGE=${FRONTEND_TAG_DH}
+                     """
+                }
+            }
+        }
+
+        stage('Approval for Staging / Prod Deploy') {
+            when {
+                anyOf {
+                    branch 'stg'
+                    branch 'prod'
+                }
+            }
+            steps {
+                input message: "Deploy to ${BRANCH_NAME} environment?", ok: "Yes, Deploy"
+            }
+        }
+
+        stage('Deploy Environment') {
             steps {
                 sh """
-                    docker rmi -f ${env.FRONTEND_TAG} || true
-                    docker rmi -f ${env.BACKEND_TAG} || true
+                    docker-compose --env-file .env down
+  				docker-compose --env-file .env pull
+                    docker-compose --env-file .env up -d --remove-orphans
                 """
             }
         }
 
-        stage('Update docker-compose.yml') {
+        stage('Cleanup Local Images') {
             steps {
                 sh """
-                    sed -i 's|${ECR_URI}/.*three-tier-app-backend:.*|${env.BACKEND_TAG}|' docker-compose.yml
-                    sed -i 's|${ECR_URI}/.*three-tier-app-frontend:.*|${env.FRONTEND_TAG}|' docker-compose.yml
-                """
-            }
-        }
-
-        stage('Run with Docker Compose') {
-            steps {
-                sh """
-                    docker-compose down
-                    docker-compose pull
-                    docker-compose up -d
+                    docker rmi ${BACKEND_TAG_DH} ${FRONTEND_TAG_DH} || true
                 """
             }
         }
@@ -85,11 +96,10 @@ pipeline {
 
     post {
         success {
-            echo "✅ Successfully deployed app using AWS ECR images."
+            echo "✅ ${BRANCH_NAME} environment deployed successfully using Docker Hub images!"
         }
         failure {
-            echo "❌ Deployment failed. Please check logs."
+            echo "❌ Deployment failed for ${BRANCH_NAME}. Check logs."
         }
     }
 }
-
