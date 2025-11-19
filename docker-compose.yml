@@ -2,9 +2,9 @@ version: '3.8'
 
 services:
   backend:
-    image: 005743379632.dkr.ecr.eu-north-1.amazonaws.com/three-tier-app-backend:latest
+    image: ${BACKEND_IMAGE}
     ports:
-      - "5000:5000"
+      - "5003:5000"
     depends_on:
       - mongo
     env_file:
@@ -21,9 +21,9 @@ services:
       retries: 3
 
   frontend:
-    image: 005743379632.dkr.ecr.eu-north-1.amazonaws.com/three-tier-app-frontend:latest
+    image: ${FRONTEND_IMAGE}
     ports:
-      - "3000:3000"
+      - "3003:3000"
     depends_on:
       - backend
     env_file:
