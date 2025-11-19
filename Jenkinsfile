@@ -7,10 +7,15 @@ pipeline {
         DOCKERHUB_USER = 'saifrehman123'
     }
 
+    options {
+        disableConcurrentBuilds()
+    }
+
     stages {
 
         stage('Checkout Source') {
             steps {
+                sh 'rm -f .git/index.lock || true'
                 checkout scm
             }
         }
@@ -80,19 +85,19 @@ FRONTEND_IMAGE=${env.FRONTEND_TAG_DH}
 
         stage('Deploy Environment') {
             steps {
-                sh """
-                    docker-compose --env-file .env down
+                sh '''
+                    docker-compose --env-file .env down || true
                     docker-compose --env-file .env pull
                     docker-compose --env-file .env up -d --remove-orphans
-                """
+                '''
             }
         }
 
         stage('Cleanup Local Images') {
             steps {
-                sh """
+                sh '''
                     docker rmi ${env.BACKEND_TAG_DH} ${env.FRONTEND_TAG_DH} || true
-                """
+                '''
             }
         }
     }
