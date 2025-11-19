@@ -41,6 +41,7 @@ services:
 
   mongo:
     image: mongo:6.0
+    container_name: mongo-1
     ports:
       - "27017:27017"
     volumes:
